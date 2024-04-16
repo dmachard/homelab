@@ -1,0 +1,77 @@
+services:
+  publicaddr:
+    image: dmachard/publicaddr-ovhcloud:v0.6.0
+    container_name: publicaddr
+    env_file:
+      - .env   
+    restart: unless-stopped 
+    environment:
+      PUBLICADDR_OVHCLOUD_UPDATE: ${REFRESH}
+      PUBLICADDR_OVHCLOUD_DEBUG: ${DEBUG}
+      PUBLICADDR_OVHCLOUD_HAS_IPV6: ${HAS_IPV6}
+      PUBLICADDR_OVHCLOUD_ZONE: ${ZONE}
+      PUBLICADDR_OVHCLOUD_SUBDOMAINS: ${SUBDOMAINS}
+      PUBLICADDR_OVHCLOUD_ENDPOINT: ${OVH_EP}
+      PUBLICADDR_OVHCLOUD_APPLICATION_KEY: ${OVH_AK}
+      PUBLICADDR_OVHCLOUD_APPLICATION_SECRET: ${OVH_AS}
+      PUBLICADDR_OVHCLOUD_CONSUMER_KEY: ${OVH_CK}
+
+  dnscollector:
+    image: dmachard/go-dnscollector:v0.43.0
+    restart: unless-stopped
+    container_name: dnscollector
+    volumes:
+      - ./dnscollector/config.yml:/etc/dnscollector/config.yml
+      - ./dnstap:/var/dnscollector/
+    network_mode: host
+
+  blocklist_updater:
+    image: alpine:latest
+    container_name: blocklist_updater
+    volumes:
+      - ./dnsdist/:/config/
+    restart: always
+    command: >
+      sh -c "
+        chmod +x /config/download_blocklist.sh &&
+        apk add --no-cache curl && /config/download_blocklist.sh &&
+        echo '0  1  *  *  *    /config/download_blocklist.sh' > /etc/crontabs/root &&
+        crond -f"
+
+  dnsdist:
+    image: powerdns/dnsdist-19:1.9.3
+    restart: unless-stopped
+    user: root:root
+    container_name: dnsdist
+    volumes:
+      - ./dnsdist/:/etc/dnsdist/conf.d/
+    network_mode: host
+    depends_on:
+      - dnscollector
+      - blocklist_updater
+
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:v1.0.20210914-ls26
+    container_name: wireguard
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      - SERVERURL=vpn.yourdomain.com
+      - SERVERPORT=50666
+      - PEERS=peer1,peer2
+      - PEERDNS=172.16.0.254
+      - INTERNAL_SUBNET=10.13.13.0
+      - ALLOWEDIPS=172.16.0.0/12
+      - PERSISTENTKEEPALIVE_PEERS=all
+      - LOG_CONFS=true
+    volumes:
+      - ./wireguard:/config
+      - /lib/modules:/lib/modules
+    ports:
+      - 51820:51820/udp
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    restart: unless-stopped

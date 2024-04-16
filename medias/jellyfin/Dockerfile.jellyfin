@@ -1,0 +1,20 @@
+#FROM ghcr.io/jellyfin/jellyfin:2024040105-amd64
+# Jellyfin Unstable: https://repo.jellyfin.org/files/plugin-unstable/manifest.json
+
+FROM jellyfin/jellyfin:10.8.13
+
+COPY rocm.sources /tmp/rocm.sources
+
+# https://jellyfin.org/docs/general/administration/hardware-acceleration/amd/#configure-with-linux-virtualization
+# sudo docker exec -it jellyfin /usr/lib/jellyfin-ffmpeg/vainfo --display drm --device /dev/dri/renderD128
+# sudo docker exec -it jellyfin /usr/lib/jellyfin-ffmpeg/ffmpeg -v debug -init_hw_device opencl
+# sudo docker exec -it jellyfin /usr/lib/jellyfin-ffmpeg/ffmpeg -v debug -init_hw_device vulkan
+RUN apt-get update && \
+    apt-get install -y curl gpg && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor -o /etc/apt/keyrings/rocm.gpg && \
+    tee /etc/apt/sources.list.d/rocm.sources < /tmp/rocm.sources && \
+    apt-get update && \
+    apt-get install -y rocm-opencl-runtime && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

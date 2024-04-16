@@ -1,0 +1,23 @@
+global:
+  trace:
+    verbose: true
+
+multiplexer:
+  collectors:
+    - name: tap
+      dnstap:
+        listen-ip: 0.0.0.0
+        listen-port: 6000
+      transforms:
+        normalize:
+          qname-lowercase: false
+
+  loggers:
+    - name: text
+      logfile:
+        file-path:  /var/dnscollector/dnstap.log
+        mode: text
+
+  routes:
+    - from: [ tap ]
+      to: [ text ]

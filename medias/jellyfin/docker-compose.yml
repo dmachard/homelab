@@ -1,0 +1,30 @@
+# https://jellyfin.org/docs/general/administration/hardware-acceleration/amd#configure-with-linux-virtualization
+
+# $ cat /etc/group | grep render
+# render:x:105:
+
+# $ cat /etc/group | grep video
+# video:x:44:
+
+services:
+  jellyfin:
+    build:
+      context: .
+      dockerfile: Dockerfile.jellyfin
+    container_name: jellyfin
+    user: root:root
+    group_add:
+      - "102" # Change this to match your "render" host group id 
+      - "44" # Change this to match your "video" host group id
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128
+      - /dev/kfd:/dev/kfd
+      - /dev/dri/card0:/dev/dri/card0
+    network_mode: 'host'
+    volumes:
+      - ./config:/config
+      - ./cache:/cache
+      - ./downloaded:/downloaded
+    restart: 'unless-stopped'
+    environment:
+      - JELLYFIN_PublishedServerUrl=http://192.168.1.249

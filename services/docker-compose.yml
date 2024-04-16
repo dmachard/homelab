@@ -1,0 +1,252 @@
+# sudo docker network create traefik_proxy
+
+networks:
+  traefik_proxy:
+    external: true
+  immich:
+
+services:
+  traefik:
+    image: traefik:${TRAEFIK_VERSION}
+    container_name: traefik
+    ports:
+      - 443:443/tcp
+
+    networks:
+      - traefik_proxy
+
+    restart: unless-stopped
+
+    labels:
+      - traefik.enable=true  
+      - traefik.http.routers.traefik.entrypoints=websecure
+      - traefik.http.routers.traefik.rule=Host(`traefik.example.com`)
+      - traefik.http.routers.traefik.service=api@internal
+      - traefik.http.routers.traefik.tls.certresolver=letsencrypt
+
+    env_file:
+      - .env
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /mnt/data/certs:/data
+
+    environment:
+      - OVH_ENDPOINT: ovh-eu
+      - OVH_APPLICATION_KEY: ${OVH_AK}
+      - OVH_APPLICATION_SECRET: ${OVH_AS}
+      - OVH_CONSUMER_KEY: ${OVH_CK}
+
+    command:
+      # See https://doc.traefik.io/traefik/providers/docker/
+      - --providers.docker=true
+      - --providers.docker.network=traefik_proxy
+      - --providers.docker.watch=true
+      - --providers.docker.exposedbydefault=false
+      # See https://doc.traefik.io/traefik/observability/logs/
+      - --log.filePath=/data/traefik.log
+      - --log.level=DEBUG
+      - --accesslog
+      # See https://doc.traefik.io/traefik/operations/api/
+      - --api=true
+      - --api.dashboard=true
+      # See https://doc.traefik.io/traefik/routing/entrypoints/#redirection
+      - --entryPoints.websecure.address=:443
+      # See https://doc.traefik.io/traefik/https/acme/
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=ovh
+      - --certificatesresolvers.letsencrypt.acme.email=home@lab
+      - --certificatesresolvers.letsencrypt.acme.storage=/data/acme.json
+
+  dufs:
+    image: sigoden/dufs:${DUFS_VERSION}
+    container_name: dufs
+    user: ${PUID}:${PGID}
+    volumes:
+      - /mnt/data:/data
+    expose:
+      - 5000
+    command: /data -a "admin:admin@/:rw" -A --log-format=''
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.dufs.loadbalancer.server.port=5000
+      - traefik.http.routers.dufs.entrypoints=websecure
+      - traefik.http.routers.dufs.rule=Host(`files.example.com`)
+      - traefik.http.routers.dufs.tls.certresolver=letsencrypt
+    networks:
+      - traefik_proxy
+    restart: unless-stopped
+
+  freshrss:
+    image: freshrss/freshrss:${FRESHRSS_VERSION}
+    container_name: freshrss
+    volumes:
+      - /mnt/data/freshrss-data:/var/www/FreshRSS/data
+      - /mnt/data/freshrss-extensions:/var/www/FreshRSS/extensions
+    expose:
+      - 80
+    environment:
+      - CRON_MIN=4,34
+      - TZ=Europe/Paris
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.freshrss.loadbalancer.server.port=80
+      - traefik.http.routers.freshrss.entrypoints=websecure
+      - traefik.http.routers.freshrss.rule=Host(`rss.example.com`)
+      - traefik.http.routers.freshrss.tls.certresolver=letsencrypt
+    networks:
+      - traefik_proxy
+    restart: unless-stopped
+
+  vaultwarden:
+    container_name: vaultwarden
+    image: vaultwarden/server:${VAULTWARDEN_VERSION}
+    volumes:
+      - /mnt/data/vault:/data 
+    environment:
+      ADMIN_TOKEN: "lab@home"
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.vaultwarden.loadbalancer.server.port=80
+      - traefik.http.routers.vaultwarden.entrypoints=websecure
+      - traefik.http.routers.vaultwarden.rule=Host(`vault.example.com`)
+      - traefik.http.routers.vaultwarden.tls.certresolver=letsencrypt
+    networks:
+      - traefik_proxy
+      - vault_net
+    expose:
+      - 80
+    restart: unless-stopped
+
+  airsonic:
+    image: tamland/airsonic-refix:${AIRSONIC_VERSION}
+    container_name: airsonic
+    environment:
+      - SERVER_URL=https://subsonic.example.com
+    expose:
+      - 80
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.airsonic.loadbalancer.server.port=80
+      - traefik.http.routers.airsonic.entrypoints=websecure
+      - traefik.http.routers.airsonic.rule=Host(`music.example.com`)
+      - traefik.http.routers.airsonic.tls.certresolver=letsencrypt
+    networks:
+      - traefik_proxy
+    restart: unless-stopped
+
+  gonic:
+    image: sentriz/gonic:${GONIC_VERSION}
+    container_name: gonic
+    environment:
+      - TZ=Etc/UTC
+      - GONIC_SCAN_WATCHER_ENABLED=true
+      - GONIC_LISTEN_ADDR=0.0.0.0:4747
+    expose:
+      - 4747
+    user: ${PUID}:${PGID}
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.subsonic.loadbalancer.server.port=4747
+      - traefik.http.routers.subsonic.entrypoints=websecure
+      - traefik.http.routers.subsonic.rule=Host(`subsonic.example.com`)
+      - traefik.http.routers.subsonic.tls.certresolver=letsencrypt
+    networks:
+      - traefik_proxy
+    volumes:
+      - /mnt/data/music/gonic_data:/data # gonic db etc
+      - /mnt/data/music/gonic_cache:/cache # transcode / covers / etc cache dir
+      - /mnt/data/music/albums:/music:ro # your music
+      - /mnt/data/music/podcasts:/podcasts # your podcasts
+      - /mnt/data/music/playlists:/playlists # your playlists
+    restart: unless-stopped
+
+  immich-server:
+    container_name: immich_server
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
+    command: [ "start.sh", "immich" ]
+    volumes:
+      - ${UPLOAD_LOCATION}:/usr/src/app/upload
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - .env
+    expose:
+      - 3001
+    depends_on:
+      - immich-redis
+      - immich-database
+    user: ${PUID}:${PGID}
+    labels:
+      - traefik.enable=true
+      - traefik.http.services.immich.loadbalancer.server.port=3001
+      - traefik.http.routers.immich.entrypoints=websecure
+      - traefik.http.routers.immich.rule=Host(`photos.example;com`)
+      - traefik.http.routers.immich.tls.certresolver=letsencrypt
+    networks:
+      - traefik_proxy
+      - immich
+
+    restart: always
+
+  immich-microservices:
+    container_name: immich_microservices
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
+    command: [ "start.sh", "microservices" ]
+    volumes:
+      - ${IMMICH_UPLOAD_LOCATION}:/usr/src/app/upload
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - .env
+    depends_on:
+      - immich-redis
+      - immich-database
+    user: ${PUID}:${PGID}
+    networks:
+      - immich
+    expose:
+      - 3001
+    restart: always
+
+  immich-machine-learning:
+    container_name: immich_machine_learning
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}
+    env_file:
+      - .env
+    user: ${PUID}:${PGID}
+    networks:
+      - immich
+    volumes:
+      - /mnt/data/photos/immich-model-cache:/cache
+    restart: always
+
+  immich-redis:
+    container_name: immich_redis
+    image: redis:6.2-alpine@sha256:afb290a0a0d0b2bd7537b62ebff1eb84d045c757c1c31ca2ca48c79536c0de82
+    restart: always
+    user: ${PUID}:${PGID}
+    networks:
+      - immich
+    expose:
+      - 6379
+    volumes:
+      - /mnt/data/photos/immich-cache:/data
+
+  immich-database:
+    container_name: immich_postgres
+    image: tensorchord/pgvecto-rs:pg14-v0.2.0@sha256:90724186f0a3517cf6914295b5ab410db9ce23190a2d9d0b9dd6463e3fa298f0
+    user: ${PUID}:${PGID}
+    env_file:
+      - .env
+    environment:
+      POSTGRES_PASSWORD: ${IMMICH_DB_PASSWORD}
+      POSTGRES_USER: ${IMMICH_DB_USERNAME}
+      POSTGRES_DB: ${IMMICH_DB_DATABASE_NAME}
+    networks:
+      - immich
+    expose:
+      - 5432
+    volumes:
+      - /mnt/data/photos/immich-db:/var/lib/postgresql/data
+
+    restart: always
+
