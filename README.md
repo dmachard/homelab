@@ -2,14 +2,16 @@
 
 Docker stacks for homelab server, this stack contains:
 
-- dnsdist
-- dnscollector
-- wireguard
-- dufs
-- jellyfin
-- immich
-- gonic
-- airsonic
+- dnsdist (dns)
+- recursor (dns)
+- dnscollector (dns)
+- wireguard (vpn)
+- dufs (file sharing)
+- jellyfin (videos)
+- immich (photos)
+- gonic (music)
+- airsonic (music)
+- traefik (proxy)
 
 ## Deploy
 

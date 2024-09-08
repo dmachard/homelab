@@ -6,57 +6,6 @@ networks:
   immich:
 
 services:
-  traefik:
-    image: traefik:${TRAEFIK_VERSION}
-    container_name: traefik
-    ports:
-      - 443:443/tcp
-
-    networks:
-      - traefik_proxy
-
-    restart: unless-stopped
-
-    labels:
-      - traefik.enable=true  
-      - traefik.http.routers.traefik.entrypoints=websecure
-      - traefik.http.routers.traefik.rule=Host(`traefik.example.com`)
-      - traefik.http.routers.traefik.service=api@internal
-      - traefik.http.routers.traefik.tls.certresolver=letsencrypt
-
-    env_file:
-      - .env
-
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /mnt/data/certs:/data
-
-    environment:
-      - OVH_ENDPOINT: ovh-eu
-      - OVH_APPLICATION_KEY: ${OVH_AK}
-      - OVH_APPLICATION_SECRET: ${OVH_AS}
-      - OVH_CONSUMER_KEY: ${OVH_CK}
-
-    command:
-      # See https://doc.traefik.io/traefik/providers/docker/
-      - --providers.docker=true
-      - --providers.docker.network=traefik_proxy
-      - --providers.docker.watch=true
-      - --providers.docker.exposedbydefault=false
-      # See https://doc.traefik.io/traefik/observability/logs/
-      - --log.filePath=/data/traefik.log
-      - --log.level=DEBUG
-      - --accesslog
-      # See https://doc.traefik.io/traefik/operations/api/
-      - --api=true
-      - --api.dashboard=true
-      # See https://doc.traefik.io/traefik/routing/entrypoints/#redirection
-      - --entryPoints.websecure.address=:443
-      # See https://doc.traefik.io/traefik/https/acme/
-      - --certificatesresolvers.letsencrypt.acme.dnschallenge=true
-      - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=ovh
-      - --certificatesresolvers.letsencrypt.acme.email=home@lab
-      - --certificatesresolvers.letsencrypt.acme.storage=/data/acme.json
 
   dufs:
     image: sigoden/dufs:${DUFS_VERSION}

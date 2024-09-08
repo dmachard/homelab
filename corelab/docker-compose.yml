@@ -1,0 +1,143 @@
+networks:
+  traefik_proxy:
+    external: true
+    
+services:
+  publicaddr:
+    image: dmachard/publicaddr-ovhcloud:${PUBLICADDR_VERSION}
+    container_name: publicaddr
+    env_file:
+      - .env   
+    restart: unless-stopped 
+    environment:
+      PUBLICADDR_OVHCLOUD_UPDATE: ${PUBLICADDR_REFRESH}
+      PUBLICADDR_OVHCLOUD_DEBUG: ${PUBLICADDR_DEBUG}
+      PUBLICADDR_OVHCLOUD_HAS_IPV6: ${PUBLICADDR_HAS_IPV6}
+      PUBLICADDR_OVHCLOUD_ZONE: ${PUBLICADDR_ZONE}
+      PUBLICADDR_OVHCLOUD_SUBDOMAINS: ${PUBLICADDR_SUBDOMAINS}
+      PUBLICADDR_OVHCLOUD_ENDPOINT: ${OVH_EP}
+      PUBLICADDR_OVHCLOUD_APPLICATION_KEY: ${OVH_AK}
+      PUBLICADDR_OVHCLOUD_APPLICATION_SECRET: ${OVH_AS}
+      PUBLICADDR_OVHCLOUD_CONSUMER_KEY: ${OVH_CK}
+
+  dnscollector:
+    image: dmachard/go-dnscollector:${DNSCOLLECTOR_VERSION}
+    restart: unless-stopped
+    container_name: dnscollector
+    volumes:
+      - ./dnscollector/config.yml:/etc/dnscollector/config.yml
+      - ./dnstap:/var/dnscollector/
+    network_mode: host
+
+  blocklist_updater:
+    image: alpine:latest
+    container_name: blocklist_updater
+    volumes:
+      - ./dnsdist/:/config/
+    restart: always
+    command: >
+      sh -c "
+        chmod +x /config/download_blocklist.sh &&
+        apk add --no-cache curl && /config/download_blocklist.sh &&
+        echo '0  1  *  *  *    /config/download_blocklist.sh' > /etc/crontabs/root &&
+        crond -f"
+
+  dnsdist:
+    image: powerdns/${DNSDIST_VERSION}
+    restart: unless-stopped
+    user: root:root
+    container_name: dnsdist
+    volumes:
+      - ./dnsdist/:/etc/dnsdist/conf.d/
+    network_mode: host
+    depends_on:
+      - dnscollector
+      - blocklist_updater
+
+  recursor:
+    image: powerdns/${RECURSOR_VERSION}
+    restart: unless-stopped
+    container_name: recursor
+    network_mode: host
+    volumes:
+      - ./recursor/recursor.yml:/etc/powerdns/recursor.yml
+    depends_on:
+      - dnscollector
+
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:${WIREGUARD_VERSION}
+    container_name: wireguard
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      - SERVERURL=vpn.yourdomain.com
+      - SERVERPORT=50666
+      - PEERS=peer1,peer2
+      - PEERDNS=172.16.0.254
+      - INTERNAL_SUBNET=10.13.13.0
+      - ALLOWEDIPS=172.16.0.0/12
+      - PERSISTENTKEEPALIVE_PEERS=all
+      - LOG_CONFS=true
+    volumes:
+      - ./wireguard:/config
+      - /lib/modules:/lib/modules
+    ports:
+      - 51820:51820/udp
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    restart: unless-stopped
+
+  traefik:
+    image: traefik:${TRAEFIK_VERSION}
+    container_name: traefik
+    ports:
+      - 443:443/tcp
+
+    networks:
+      - traefik_proxy
+
+    restart: unless-stopped
+
+    labels:
+      - traefik.enable=true  
+      - traefik.http.routers.traefik.entrypoints=websecure
+      - traefik.http.routers.traefik.rule=Host(`traefik.example.com`)
+      - traefik.http.routers.traefik.service=api@internal
+      - traefik.http.routers.traefik.tls.certresolver=letsencrypt
+
+    env_file:
+      - .env
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /mnt/data/certs:/data
+
+    environment:
+      OVH_ENDPOINT: ${OVH_EP}
+      OVH_APPLICATION_KEY: ${OVH_AK}
+      OVH_APPLICATION_SECRET: ${OVH_AS}
+      OVH_CONSUMER_KEY: ${OVH_CK}
+
+    command:
+      # See https://doc.traefik.io/traefik/providers/docker/
+      - --providers.docker=true
+      - --providers.docker.network=traefik_proxy
+      - --providers.docker.watch=true
+      - --providers.docker.exposedbydefault=false
+      # See https://doc.traefik.io/traefik/observability/logs/
+      - --log.filePath=/data/traefik.log
+      - --log.level=DEBUG
+      - --accesslog
+      # See https://doc.traefik.io/traefik/operations/api/
+      - --api=true
+      - --api.dashboard=true
+      # See https://doc.traefik.io/traefik/routing/entrypoints/#redirection
+      - --entryPoints.websecure.address=:443
+      # See https://doc.traefik.io/traefik/https/acme/
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=${ACME_PROVIDER}
+      - --certificatesresolvers.letsencrypt.acme.email=home@lab
+      - --certificatesresolvers.letsencrypt.acme.storage=/data/acme.json
